@@ -38,6 +38,20 @@ def _allowed_origins() -> list[str]:
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
+def _configure_cors(application: FastAPI) -> None:
+    """Enable CORS when ``ALLOWED_ORIGINS`` is set (comma-separated, or ``*``)."""
+    origins = _allowed_origins()
+    if not origins:
+        return
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"] if origins == ["*"] else origins,
+        allow_credentials=origins != ["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
 app = FastAPI(
     title="Provider Contract Change Validation API",
     description=(
@@ -48,15 +62,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-origins = _allowed_origins()
-if origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+_configure_cors(app)
 
 app.include_router(health.router)
 app.include_router(decisions.router)

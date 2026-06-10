@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "pip install -r requirements-vercel.txt",
+  "functions": {
+    "api/main.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{tests/**,app/**,tools/**,docs/**,**/__pycache__/**,**/*.pyc,**/.pytest_cache/**,conftest.py,pytest.ini}"
+    }
+  }
+}
