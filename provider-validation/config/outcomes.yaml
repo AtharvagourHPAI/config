@@ -1,0 +1,17 @@
+# Controlled vocabulary of validation outcomes and the default downstream
+# contract action attached to each. Editing the actions here changes what the
+# engine reports without touching decision code.
+
+outcomes:
+  - APPROVE
+  - DEVELOP
+  - DENY
+  - REJECT
+  - INITIAL_ENROLLMENT_REQUIRED
+
+default_contract_actions:
+  APPROVE: "Apply change to contract"
+  DEVELOP: "Issue development request; set due date"
+  DENY: "Reject change; refer for review"
+  REJECT: "Return submission to provider"
+  INITIAL_ENROLLMENT_REQUIRED: "Route to initial enrollment intake"

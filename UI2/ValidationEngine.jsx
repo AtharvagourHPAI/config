@@ -1,0 +1,637 @@
+import React, { useState } from "react";
+
+/**
+ * healthplans.ai — Contract Validation Engine (enhanced, light theme)
+ * Single-file React component. Brand assets expected at:
+ *   ./assets/dash.png       (mascot, transparent)
+ *   ./assets/logo-ink.png   (dark wordmark, transparent — reads on light)
+ * Swap the imports for hosted URLs if your setup has no asset bundler.
+ */
+import dashMascot from "./assets/dash.png";
+import logoInk from "./assets/logo-ink.png";
+
+/* ------------------------------- data ------------------------------- */
+const OUT = {
+  APPROVE: { label: "Approve", color: "#15945f", bg: "#e4f5ed" },
+  DEVELOP: { label: "Develop", color: "#2f7dc6", bg: "#e6f0fb" },
+  DENY: { label: "Deny", color: "#d23b30", bg: "#fbe8e6" },
+  REJECT: { label: "Reject", color: "#c07d12", bg: "#fbf0dc" },
+  INITIAL_ENROLLMENT_REQUIRED: { label: "Initial Enrollment", color: "#7a4fb0", bg: "#f1eafb" },
+};
+const ICON = {
+  APPROVE: <path d="M5 13l4 4L19 7" />,
+  DEVELOP: (<><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h0" /></>),
+  DENY: <path d="M18 6L6 18M6 6l12 12" />,
+  REJECT: <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />,
+  INITIAL_ENROLLMENT_REQUIRED: <path d="M5 12h14M13 6l6 6-6 6" />,
+};
+const TIERS = [
+  { tier: "Tier 1", name: "Adverse action", rid: "R-005", out: "DENY" },
+  { tier: "Tier 2", name: "Procedural", rid: "R-001 · R-008", out: "REJECT" },
+  { tier: "Tier 3", name: "Cross-state add", rid: "R-003", out: "INITIAL_ENROLLMENT_REQUIRED" },
+  { tier: "Tier 4", name: "Hold / develop", rid: "R-002/4/6/7/9/10", out: "DEVELOP" },
+  { tier: "Default", name: "All pass", rid: "—", out: "APPROVE" },
+];
+
+const REQUESTS = {
+  "CR-2026-00051": {
+    out: "DENY", action: "Reject change · refer for review", win: "R-005", match: true,
+    label: "CR-2026-00051 · Adverse Action (Change)",
+    req: { "Request ID": "CR-2026-00051", Category: "Adverse Action", Action: "Change", "CMS form": "CMS-855I",
+      "Existing value": ["Disclosure: none", "Final Adverse Legal Action reported"], "Requested value": null,
+      "New location state": "—", "Same state?": "N/A", "Signature present": "Yes", "Development requested": "No", "Development due": "—", Screening: "MED/SAM + adverse review" },
+    con: { "Contract ID": "PC-2026-00033", Provider: "Devon R. Hale, DO", NPI: "1338000095", PTAN: "P000033", "TIN/SSN key": "35-1000033",
+      "Legal business name": "Hale Medical Group LLC", "Provider type": "Individual Practitioner", "Primary specialty": "Cardiology",
+      "Contract status": "Active", "PECOS status": "Approved", "Practice state": "TX", "Sanction screening": "Clear" },
+    tags: [["adverse_action_flag", true, "warn"], ["screening_tier", true, "warn"], ["signature_present", true, "on"]],
+    tier: "MED/SAM + adverse review",
+    rules: [["R-005", "fail", "DENY", "No Final Adverse Legal Action present"], ["R-002", "pass", "—", "Identifiers match source-of-truth contract"], ["R-008", "pass", "—", "Certification statement signed"]],
+  },
+  "CR-2026-00043": {
+    out: "DEVELOP", action: "Issue development request · due in 30 days", win: "R-006", match: true,
+    label: "CR-2026-00043 · Reassignment (Add)",
+    req: { "Request ID": "CR-2026-00043", Category: "Reassignment", Action: "Add", "CMS form": "CMS-855I",
+      "Existing value": "—", "Requested value": "Reassign benefits to Northbridge Family Care (Org NPI 1902008841)",
+      "New location state": "—", "Same state?": "N/A", "Signature present": "Yes", "Development requested": "Yes", "Development due": "2026-07-15", Screening: "MED/SAM check" },
+    con: { "Contract ID": "PC-2026-00018", Provider: "Aisha Bello, MD", NPI: "1771044108", PTAN: "P000018", "TIN/SSN key": "35-1000018",
+      "Legal business name": "Bello Care PLLC", "Provider type": "Individual Practitioner", "Primary specialty": "Family Medicine",
+      "Contract status": "Active", "PECOS status": "Approved", "Practice state": "OH", "Sanction screening": "Clear" },
+    tags: [["reassignee_unverified", true, "warn"], ["signature_present", true, "on"], ["docs_complete", false, "warn"]],
+    tier: "MED/SAM check",
+    rules: [["R-002", "pass", "—", "Identifiers match source-of-truth contract"], ["R-006", "fail", "DEVELOP", "Reassignment target not yet enrolled — verify"], ["R-010", "fail", "DEVELOP", "New supporting evidence required"]],
+  },
+  "CR-2026-00066": {
+    out: "INITIAL_ENROLLMENT_REQUIRED", action: "Route to initial enrollment intake", win: "R-003", match: true,
+    label: "CR-2026-00066 · Practice Location (Add)",
+    req: { "Request ID": "CR-2026-00066", Category: "Practice Location", Action: "Add", "CMS form": "CMS-855I",
+      "Existing value": ["Practice: 88 Cedar St, Reno, NV", "+ 410 Pine Ave, Sacramento, CA"], "Requested value": null,
+      "New location state": "CA", "Same state?": "No", "Signature present": "Yes", "Development requested": "No", "Development due": "—", Screening: "MED/SAM check" },
+    con: { "Contract ID": "PC-2026-00041", Provider: "Cascade Pediatrics LLC", NPI: "1771044100", PTAN: "P000041", "TIN/SSN key": "35-1000041",
+      "Legal business name": "Cascade Pediatrics LLC", "Provider type": "Clinic/Group", "Primary specialty": "Pediatrics",
+      "Contract status": "Active", "PECOS status": "Approved", "Practice state": "NV", "Sanction screening": "Clear" },
+    tags: [["cross_state", true, "warn"], ["signature_present", true, "on"], ["docs_complete", true, "on"]],
+    tier: "MED/SAM check",
+    rules: [["R-003", "fail", "INITIAL_ENROLLMENT_REQUIRED", "New practice location is out-of-state"], ["R-002", "pass", "—", "Identifiers match source-of-truth contract"], ["R-008", "pass", "—", "Certification statement signed"]],
+  },
+  "CR-2026-00070": {
+    out: "DEVELOP", action: "Issue development request · CMS-588 + bank docs required", win: "R-007", match: true,
+    label: "CR-2026-00070 · EFT (Change)",
+    req: { "Request ID": "CR-2026-00070", Category: "EFT", Action: "Change", "CMS form": "CMS-855I",
+      "Existing value": ["Acct ····4412 / Routing ····0021", "Acct ····8890 / Routing ····0067"], "Requested value": null,
+      "New location state": "—", "Same state?": "N/A", "Signature present": "Yes", "Development requested": "Yes", "Development due": "2026-07-09", Screening: "MED/SAM check" },
+    con: { "Contract ID": "PC-2026-00022", Provider: "A. Lindqvist, NP", NPI: "1556022218", PTAN: "P000022", "TIN/SSN key": "35-1000022",
+      "Legal business name": "Lindqvist Health LLC", "Provider type": "Individual Practitioner", "Primary specialty": "Nurse Practitioner",
+      "Contract status": "Active", "PECOS status": "Approved", "Practice state": "MN", "Sanction screening": "Clear" },
+    tags: [["eft_docs_missing", true, "warn"], ["signature_present", true, "on"]],
+    tier: "MED/SAM check",
+    rules: [["R-007", "fail", "DEVELOP", "EFT change missing CMS-588 / bank documentation"], ["R-008", "pass", "—", "Certification statement signed"], ["R-002", "pass", "—", "Identifiers match source-of-truth contract"]],
+  },
+  "CR-2026-00002": {
+    out: "APPROVE", action: "Apply change to contract", win: null, match: true,
+    label: "CR-2026-00002 · Correspondence Address (Change)",
+    req: { "Request ID": "CR-2026-00002", Category: "Correspondence Address", Action: "Change", "CMS form": "CMS-855I",
+      "Existing value": ["77 Old Mill Rd, Phoenix, AZ 85003", "102 Provider Admin Center, Phoenix, AZ 85004-1015"], "Requested value": null,
+      "New location state": "—", "Same state?": "N/A", "Signature present": "Yes", "Development requested": "No", "Development due": "—", Screening: "MED/SAM check" },
+    con: { "Contract ID": "PC-2026-00015", Provider: "Dr. Emerson Johnson", NPI: "1100000015", PTAN: "P000015", "TIN/SSN key": "35-1000015",
+      "Legal business name": "Johnson Professional Services LLC", "Provider type": "Individual Practitioner", "Primary specialty": "Psychiatry",
+      "Contract status": "Active", "PECOS status": "Approved", "Practice state": "AZ", "Sanction screening": "Clear" },
+    tags: [["signature_present", true, "on"], ["docs_complete", true, "on"], ["adverse_action_flag", false, ""]],
+    tier: "MED/SAM check",
+    rules: [["R-001", "pass", "—", "Form is CMS-855I"], ["R-002", "pass", "—", "Identifiers match source-of-truth contract"], ["R-008", "pass", "—", "Certification statement signed"], ["R-010", "pass", "—", "Documentation complete / reusable"]],
+  },
+  "CR-2026-00084": {
+    out: "APPROVE", action: "Apply change to contract", win: null, match: true,
+    label: "CR-2026-00084 · Specialty (Change)",
+    req: { "Request ID": "CR-2026-00084", Category: "Specialty", Action: "Change", "CMS form": "CMS-855I",
+      "Existing value": ["Internal Medicine", "Internal Medicine — Endocrinology"], "Requested value": null,
+      "New location state": "—", "Same state?": "N/A", "Signature present": "Yes", "Development requested": "No", "Development due": "—", Screening: "MED/SAM check" },
+    con: { "Contract ID": "PC-2026-00029", Provider: "Priya Nadkarni, MD", NPI: "1209077763", PTAN: "P000029", "TIN/SSN key": "35-1000029",
+      "Legal business name": "Nadkarni Medical PLLC", "Provider type": "Individual Practitioner", "Primary specialty": "Internal Medicine",
+      "Contract status": "Active", "PECOS status": "Approved", "Practice state": "IL", "Sanction screening": "Clear" },
+    tags: [["signature_present", true, "on"], ["docs_complete", true, "on"], ["specialty_compatible", true, "on"]],
+    tier: "MED/SAM check",
+    rules: [["R-009", "pass", "—", "Specialty change compatible with licensure"], ["R-002", "pass", "—", "Identifiers match source-of-truth contract"], ["R-008", "pass", "—", "Certification statement signed"]],
+  },
+};
+const ORDER = ["CR-2026-00051", "CR-2026-00043", "CR-2026-00066", "CR-2026-00070", "CR-2026-00002", "CR-2026-00084"];
+
+const DIST = [["APPROVE", 49, "#15945f"], ["DEVELOP", 6, "#2f7dc6"], ["DENY", 4, "#d23b30"], ["INITIAL_ENROLLMENT_REQUIRED", 1, "#7a4fb0"], ["REJECT", 0, "#c07d12"]];
+const CATS = [["Practice Location", "9 / 9"], ["Reassignment", "10 / 10"], ["EFT", "4 / 4"], ["Specialty", "5 / 5"], ["Adverse Action", "5 / 5"], ["Special Pay Addr.", "5 / 5"], ["Billing", "5 / 5"], ["Correspondence", "5 / 5"], ["Other", "12 / 12"]];
+const RESULTS = [
+  ["CR-2026-00051", "Adverse Action", "DENY", "DENY", true],
+  ["CR-2026-00043", "Reassignment", "DEVELOP", "DEVELOP", true],
+  ["CR-2026-00066", "Practice Location", "INITIAL_ENROLLMENT_REQUIRED", "INITIAL_ENROLLMENT_REQUIRED", true],
+  ["CR-2026-00070", "EFT", "DEVELOP", "DEVELOP", true],
+  ["CR-2026-00002", "Correspondence Address", "APPROVE", "APPROVE", true],
+  ["CR-2026-00084", "Specialty", "APPROVE", "APPROVE", true],
+  ["CR-2026-00009", "Billing", "APPROVE", "APPROVE", true],
+  ["CR-2026-00017", "Special Pay Addr.", "APPROVE", "APPROVE", true],
+  ["CR-2026-00038", "Practice Location", "APPROVE", "APPROVE", true],
+];
+const FILTERS = [["all", "All"], ["APPROVE", "Approve"], ["DEVELOP", "Develop"], ["DENY", "Deny"], ["INITIAL_ENROLLMENT_REQUIRED", "Initial enroll."], ["mismatch", "Mismatches"]];
+
+/* ------------------------------- styles ------------------------------- */
+const CSS = `
+.cve *{box-sizing:border-box;margin:0;padding:0}
+.cve{--bg:#eef3f8;--paper:#fff;--ink:#16202f;--text:#1d2a3c;--muted:#5c6b80;--muted-2:#8b9bb0;--line:#e2e9f1;--line-2:#eef2f7;
+  --cyan:#5cc6e8;--cyan-deep:#2f9fc6;--cyan-ink:#176684;--cyan-soft:#e3f4fb;
+  --approve:#15945f;--approve-bg:#e4f5ed;--develop:#2f7dc6;--develop-bg:#e6f0fb;--deny:#d23b30;--deny-bg:#fbe8e6;
+  --reject:#c07d12;--reject-bg:#fbf0dc;--initial:#7a4fb0;--initial-bg:#f1eafb;
+  --shadow-s:0 1px 2px rgba(20,40,70,.04),0 2px 8px rgba(20,40,70,.05);--shadow:0 2px 6px rgba(20,40,70,.05),0 14px 34px rgba(20,40,70,.08);
+  --radius:18px;--radius-s:12px;font-family:"Manrope",system-ui,sans-serif;color:var(--text);-webkit-font-smoothing:antialiased;
+  display:flex;min-height:100vh;position:relative;
+  background:radial-gradient(900px 500px at 88% -8%,rgba(92,198,232,.18),transparent 60%),radial-gradient(760px 520px at -6% 8%,rgba(122,79,176,.10),transparent 55%),radial-gradient(700px 600px at 50% 120%,rgba(21,148,95,.07),transparent 60%),linear-gradient(180deg,#f3f7fb,#e9eff6);}
+.cve::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+  background-image:radial-gradient(rgba(120,140,170,.12) 1px,transparent 1px);background-size:22px 22px;
+  -webkit-mask-image:radial-gradient(1200px 800px at 70% 0%,#000 30%,transparent 75%);mask-image:radial-gradient(1200px 800px at 70% 0%,#000 30%,transparent 75%)}
+.cve ::selection{background:var(--cyan-soft);color:var(--ink)}
+.cve .sidebar{width:268px;flex:0 0 268px;position:sticky;top:0;height:100vh;z-index:2;padding:26px 20px;display:flex;flex-direction:column;
+  background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(255,255,255,.74));backdrop-filter:blur(12px);border-right:1px solid var(--line)}
+.cve .brand{display:flex;flex-direction:column;gap:14px;padding:4px 6px 18px}
+.cve .brand .top{display:flex;align-items:center;gap:13px}
+.cve .brand .mark{width:54px;height:54px;border-radius:15px;flex:0 0 54px;overflow:hidden;display:grid;place-items:center;
+  background:radial-gradient(circle at 38% 30%,#f3fafe,#d9eef8);border:1px solid #cfe6f2;box-shadow:inset 0 0 16px rgba(92,198,232,.25),var(--shadow-s)}
+.cve .brand .mark img{width:50px;height:50px;object-fit:contain}
+.cve .brand .wm img{height:24px;object-fit:contain;display:block}
+.cve .brand .tagline{font-size:12.5px;color:var(--muted);line-height:1.5;font-weight:500}
+.cve .rule-divider{height:1px;background:linear-gradient(90deg,transparent,var(--line),transparent);margin:6px 0 14px}
+.cve .stat{display:flex;align-items:baseline;gap:8px;padding:5px 6px;font-size:14px;color:var(--muted)}
+.cve .stat b{font-family:"Fraunces",serif;font-size:21px;font-weight:600;color:var(--ink);min-width:34px}
+.cve .note{margin:8px 6px 0;padding:13px;border-radius:13px;background:linear-gradient(180deg,var(--cyan-soft),#f3fbfe);border:1px solid #d3ecf6;font-size:12.5px;color:#2c5a6e;line-height:1.55;font-weight:500}
+.cve .nav-label{font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted-2);margin:18px 8px 8px;font-weight:800}
+.cve .nav a{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:11px;color:#46566c;text-decoration:none;font-size:13.5px;font-weight:600;transition:.16s;margin-bottom:2px;cursor:pointer}
+.cve .nav a svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8;flex:0 0 17px}
+.cve .nav a:hover{background:#eef3f9;color:var(--ink)}
+.cve .nav a.active{background:linear-gradient(90deg,var(--cyan-soft),transparent);color:var(--cyan-ink)}
+.cve .nav a .pill{margin-left:auto;font-size:11px;background:var(--cyan);color:#04323f;padding:1px 8px;border-radius:20px;font-weight:800}
+.cve .assistant{margin-top:auto;display:flex;gap:12px;align-items:center;padding:13px;border-radius:15px;background:linear-gradient(180deg,#fff,#f4f8fc);border:1px solid var(--line);box-shadow:var(--shadow-s)}
+.cve .assistant img{width:46px;height:46px;object-fit:contain;flex:0 0 46px;filter:drop-shadow(0 3px 5px rgba(40,80,120,.18))}
+.cve .assistant .t{font-size:12.5px;line-height:1.45}.cve .assistant .t b{color:var(--ink);font-weight:700}.cve .assistant .t span{color:var(--muted)}
+.cve .main{flex:1;min-width:0;position:relative;z-index:1;display:flex;flex-direction:column}
+.cve .topbar{height:64px;display:flex;align-items:center;gap:16px;padding:0 34px;position:sticky;top:0;z-index:20;background:linear-gradient(180deg,rgba(243,247,251,.9),rgba(243,247,251,.6));backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.cve .crumbs{font-size:13px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px}.cve .crumbs b{color:var(--ink)}.cve .crumbs .sep{color:var(--muted-2)}
+.cve .topbar .right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.cve .chip{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:#2c5a6e;background:var(--cyan-soft);border:1px solid #d3ecf6;border-radius:20px;padding:5px 12px}
+.cve .chip .dot{width:7px;height:7px;border-radius:50%;background:var(--approve);box-shadow:0 0 0 3px rgba(21,148,95,.18)}
+.cve .avatar{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,#1d3450,#0e1d31);color:#cfe8f3;display:grid;place-items:center;font-weight:800;font-size:12.5px}
+.cve .content{padding:26px 34px 60px;max-width:1320px;width:100%}
+.cve .pagehead{display:flex;align-items:flex-end;gap:18px;margin-bottom:18px;flex-wrap:wrap}
+.cve .pagehead h1{font-family:"Fraunces",serif;font-weight:600;font-size:36px;letter-spacing:-.02em;line-height:1}
+.cve .pagehead .meta{font-size:13px;color:var(--muted);font-weight:600;margin-bottom:5px}.cve .pagehead .meta b{color:var(--cyan-ink)}
+.cve .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:24px}
+.cve .tab{padding:11px 18px;font-size:14.5px;font-weight:700;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;transition:.16s;margin-bottom:-1px}
+.cve .tab:hover{color:var(--ink)}.cve .tab.active{color:var(--cyan-ink);border-bottom-color:var(--cyan-deep)}
+.cve .view{animation:cveFade .4s ease}@keyframes cveFade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.cve .selector{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:20px}
+.cve .field{flex:1;min-width:280px}.cve .field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:7px}
+.cve .select{position:relative}
+.cve .select select{width:100%;appearance:none;font-family:inherit;font-size:14px;font-weight:600;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:13px;padding:13px 44px 13px 16px;box-shadow:var(--shadow-s);cursor:pointer;outline:none;transition:.16s}
+.cve .select select:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(92,198,232,.2)}
+.cve .select::after{content:"";position:absolute;right:18px;top:50%;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:translateY(-70%) rotate(45deg);pointer-events:none}
+.cve .verdict-bar{position:sticky;top:64px;z-index:15;margin-bottom:20px;border-radius:var(--radius);overflow:hidden;background:var(--paper);border:1px solid var(--line);box-shadow:var(--shadow)}
+.cve .verdict-bar .accent{height:4px}
+.cve .verdict-inner{display:flex;align-items:center;gap:18px;padding:18px 22px;flex-wrap:wrap}
+.cve .verdict-inner .ic{width:52px;height:52px;border-radius:15px;display:grid;place-items:center;flex:0 0 52px;color:#fff}
+.cve .verdict-inner .ic svg{width:27px;height:27px;stroke:#fff;fill:none;stroke-width:2.4}
+.cve .verdict-inner .tx h2{font-family:"Fraunces",serif;font-size:26px;font-weight:600;letter-spacing:-.01em;line-height:1.05}
+.cve .verdict-inner .tx .act{font-size:13.5px;color:var(--muted);font-weight:600;margin-top:3px}
+.cve .verdict-inner .right{margin-left:auto;display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.cve .vk{text-align:right}.cve .vk .lab{font-size:11px;color:var(--muted-2);font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+.cve .vk .val{font-family:"JetBrains Mono",monospace;font-size:15px;font-weight:600;color:var(--ink);margin-top:3px}.cve .vk .val.match{color:var(--approve)}
+.cve .actions{display:flex;gap:9px}
+.cve .btn{font-family:inherit;font-size:13px;font-weight:700;padding:10px 16px;border-radius:11px;border:1px solid var(--line);background:var(--paper);color:var(--ink);cursor:pointer;transition:.16s;display:flex;align-items:center;gap:7px;white-space:nowrap}
+.cve .btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2}
+.cve .btn:hover{border-color:var(--cyan);background:var(--cyan-soft)}
+.cve .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}.cve .btn.primary:hover{background:#243349}
+.cve .btn.danger{color:var(--deny);border-color:#f0cdc9}.cve .btn.danger:hover{background:var(--deny-bg)}
+.cve .ladder-card{margin-bottom:22px}
+.cve .ladder{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;padding:16px 20px}
+.cve .ladder .step{flex:1;min-width:130px;position:relative;padding:12px 14px;border-radius:11px;background:#f6f9fc;border:1px solid var(--line-2);margin-right:26px;margin-bottom:6px}
+.cve .ladder .step:last-child{margin-right:0}
+.cve .ladder .step::after{content:"";position:absolute;right:-22px;top:50%;width:18px;height:2px;background:var(--line);transform:translateY(-50%)}
+.cve .ladder .step:last-child::after{display:none}
+.cve .ladder .step .tier{font-size:10px;font-weight:800;letter-spacing:.06em;color:var(--muted-2);text-transform:uppercase}
+.cve .ladder .step .name{font-size:13px;font-weight:700;color:#3c4b60;margin-top:3px}
+.cve .ladder .step .rid{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);margin-top:2px}
+.cve .ladder .step.skip{opacity:.5}
+.cve .ladder .step.fired{background:var(--paper);box-shadow:0 6px 18px rgba(20,40,70,.1)}
+.cve .ladder .step .badge2{position:absolute;top:10px;right:10px;font-size:9.5px;font-weight:800;padding:2px 7px;border-radius:20px;letter-spacing:.04em;background:#eef2f7;color:var(--muted)}
+.cve .ladder .step.fired .badge2{color:#fff}
+.cve .card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.cve .card .hd{padding:16px 20px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;gap:10px}
+.cve .card .hd h3{font-size:15px;font-weight:700;letter-spacing:-.01em}
+.cve .card .hd .meta{margin-left:auto;font-size:12px;color:var(--muted);font-weight:600}
+.cve .card .hd .ic-sm{width:22px;height:22px;border-radius:7px;background:var(--cyan-soft);display:grid;place-items:center;flex:0 0 22px}
+.cve .card .hd .ic-sm svg{width:13px;height:13px;stroke:var(--cyan-ink);fill:none;stroke-width:2}
+.cve .two{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:22px}
+.cve .dl{padding:6px 8px}
+.cve .dl .row{display:grid;grid-template-columns:150px 1fr;gap:6px;padding:9px 12px;border-radius:9px;align-items:center}
+.cve .dl .row:nth-child(odd){background:#f7fafc}
+.cve .dl .row .k{font-size:12.5px;color:var(--muted);font-weight:600}
+.cve .dl .row .v{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:var(--ink);font-weight:500;word-break:break-word}.cve .dl .row .v.em{color:var(--muted-2)}
+.cve .diff{display:flex;flex-direction:column;gap:5px}
+.cve .diff .old{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--deny);background:var(--deny-bg);border:1px solid #f3d6d2;border-radius:7px;padding:5px 9px;text-decoration:line-through;width:fit-content}
+.cve .diff .new{font-family:"JetBrains Mono",monospace;font-size:12px;color:#0d6e47;background:var(--approve-bg);border:1px solid #c7e8d8;border-radius:7px;padding:5px 9px;width:fit-content}
+.cve .tags{display:flex;flex-wrap:wrap;gap:8px;padding:18px 20px}
+.cve .tag{font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:600;padding:6px 11px;border-radius:9px;background:#f0f4f8;color:#41566e;border:1px solid var(--line);display:inline-flex;align-items:center;gap:7px}
+.cve .tag::before{content:"";width:6px;height:6px;border-radius:50%;background:#aab8c8}
+.cve .tag.on{background:var(--cyan-soft);color:var(--cyan-ink);border-color:#cfe9f4}.cve .tag.on::before{background:var(--cyan-deep)}
+.cve .tag.warn{background:var(--reject-bg);color:#8a5a0e;border-color:#f0dcb4}.cve .tag.warn::before{background:var(--reject)}
+.cve .tier-line{padding:0 20px 16px;font-size:12.5px;color:var(--muted)}
+.cve .tier-line b{color:var(--ink);font-family:"JetBrains Mono",monospace;font-weight:600;font-size:12px}
+.cve table{width:100%;border-collapse:collapse}
+.cve thead th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-2);font-weight:800;text-align:left;padding:12px 20px;border-bottom:1px solid var(--line)}
+.cve tbody td{padding:13px 20px;border-bottom:1px solid var(--line-2);font-size:13.5px;vertical-align:middle}
+.cve tbody tr:last-child td{border-bottom:0}
+.cve tbody tr.win{background:linear-gradient(90deg,var(--cyan-soft),transparent)}
+.cve .rmono{font-family:"JetBrains Mono",monospace;font-size:12.5px;font-weight:600;color:#33485f}
+.cve .res{display:inline-flex;align-items:center;gap:6px;font-weight:800;font-size:12px}.cve .res.pass{color:var(--approve)}.cve .res.fail{color:var(--deny)}
+.cve .res svg{width:15px;height:15px;stroke-width:3;fill:none}.cve .res.pass svg{stroke:var(--approve)}.cve .res.fail svg{stroke:var(--deny)}
+.cve .vfail{font-family:"JetBrains Mono",monospace;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:6px}
+.cve .msg{color:#46566c;font-size:13px}
+.cve .winflag{font-size:10px;font-weight:800;color:var(--cyan-ink);background:var(--cyan-soft);border:1px solid #cfe9f4;padding:2px 8px;border-radius:6px;margin-left:8px}
+.cve .matchline{padding:15px 20px;border-top:1px solid var(--line-2);font-size:13px;color:var(--muted);display:flex;align-items:center;gap:9px;background:#f7fafc;flex-wrap:wrap}
+.cve .matchline svg{width:16px;height:16px;stroke:var(--approve);fill:none;stroke-width:2.2}.cve .matchline b{color:var(--approve)}
+.cve .badge{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:800;padding:4px 11px;border-radius:20px;white-space:nowrap}
+.cve .badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.cve .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-bottom:22px}
+.cve .kpi{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.cve .kpi::after{content:"";position:absolute;right:-26px;top:-26px;width:84px;height:84px;border-radius:50%;background:radial-gradient(circle,rgba(92,198,232,.14),transparent 70%)}
+.cve .kpi .lab{font-size:12px;color:var(--muted);font-weight:700}
+.cve .kpi .val{font-family:"Fraunces",serif;font-size:33px;font-weight:600;margin-top:7px;letter-spacing:-.02em}
+.cve .kpi .sub{font-size:12px;color:var(--muted);margin-top:5px;display:flex;align-items:center;gap:6px}
+.cve .kpi .tr{font-weight:800;font-size:11px;padding:1px 7px;border-radius:6px;color:var(--approve);background:var(--approve-bg)}
+.cve .kpi .bar{height:5px;border-radius:5px;background:#eef2f7;margin-top:13px;overflow:hidden}.cve .kpi .bar i{display:block;height:100%;border-radius:5px}
+.cve .batch-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:20px;margin-bottom:22px;align-items:start}
+.cve .cm{padding:18px 20px}.cve .cm table{border-collapse:separate;border-spacing:4px}
+.cve .cm th{font-size:10.5px;color:var(--muted);font-weight:700;padding:4px 6px;border:0;text-align:center}
+.cve .cm th.rowlab{text-align:right;white-space:nowrap}
+.cve .cm td.cell{text-align:center;font-family:"JetBrains Mono",monospace;font-weight:700;font-size:13px;border-radius:8px;width:46px;height:38px;border:0}
+.cve .cm .corner{font-size:10px;color:var(--muted-2);font-weight:700;text-align:left;vertical-align:bottom}
+.cve .cm .axis{font-size:10.5px;color:var(--muted-2);font-weight:800;letter-spacing:.05em;text-transform:uppercase;text-align:center;margin-bottom:8px}
+.cve .cat-acc{padding:16px 20px;display:flex;flex-direction:column;gap:13px}
+.cve .cat-acc .r{display:grid;grid-template-columns:130px 1fr 56px;gap:12px;align-items:center}
+.cve .cat-acc .r .nm{font-size:12.5px;font-weight:700;color:#3c4b60}.cve .cat-acc .r .nm small{display:block;color:var(--muted-2);font-weight:600;font-size:10.5px}
+.cve .cat-acc .r .track{height:9px;border-radius:6px;background:#eef2f7;overflow:hidden}.cve .cat-acc .r .track i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--cyan-deep),var(--cyan))}
+.cve .cat-acc .r .pct{font-family:"JetBrains Mono",monospace;font-weight:700;font-size:12.5px;text-align:right;color:var(--ink)}
+.cve .dist{padding:18px 20px;display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+.cve .donut{position:relative;width:150px;height:150px;flex:0 0 150px}
+.cve .donut .center{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.cve .donut .center b{font-family:"Fraunces",serif;font-size:31px;font-weight:600;display:block;line-height:1}.cve .donut .center span{font-size:11px;color:var(--muted);font-weight:600}
+.cve .legend{flex:1;display:flex;flex-direction:column;gap:9px;min-width:180px}
+.cve .legend .lr{display:flex;align-items:center;gap:10px;font-size:13px}
+.cve .legend .lr .d{width:11px;height:11px;border-radius:3px;flex:0 0 11px}.cve .legend .lr .n{font-weight:600}.cve .legend .lr .c{margin-left:auto;font-family:"JetBrains Mono",monospace;font-weight:700;font-size:12.5px}
+.cve .legend .lr.zero{opacity:.6}.cve .legend .lr .tagm{font-size:10px;font-weight:800;color:var(--reject);background:var(--reject-bg);padding:1px 6px;border-radius:5px;margin-left:8px}
+.cve .clean{padding:34px 20px;text-align:center;color:var(--muted)}
+.cve .clean .big{width:54px;height:54px;border-radius:50%;background:var(--approve-bg);display:grid;place-items:center;margin:0 auto 12px}
+.cve .clean .big svg{width:28px;height:28px;stroke:var(--approve);fill:none;stroke-width:2.4}
+.cve .clean h4{font-size:16px;color:var(--ink);font-weight:700;margin-bottom:5px}
+.cve .filter-row{display:flex;gap:8px;padding:14px 20px;border-bottom:1px solid var(--line-2);flex-wrap:wrap}
+.cve .fbtn{font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;border:1px solid var(--line);background:var(--paper);color:var(--muted);cursor:pointer;transition:.15s}
+.cve .fbtn:hover{border-color:var(--cyan)}.cve .fbtn.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+.cve tbody tr.clickable{cursor:pointer;transition:.13s}.cve tbody tr.clickable:hover{background:#f6fafd}
+.cve .footer{padding:24px 34px;color:var(--muted-2);font-size:12px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center}
+.cve .footer img{width:18px;height:18px;object-fit:contain;opacity:.7}
+@media(max-width:1080px){.cve .two,.cve .batch-grid{grid-template-columns:1fr}.cve .kpis{grid-template-columns:repeat(2,1fr)}.cve .ladder{flex-direction:column}.cve .ladder .step{margin-right:0}.cve .ladder .step::after{display:none}}
+@media(max-width:760px){.cve .sidebar{display:none}}
+`;
+
+/* ------------------------------- helpers ------------------------------- */
+function DlRows({ obj }) {
+  return Object.entries(obj).map(([k, v]) => {
+    let cell;
+    if (v === null) cell = <span className="v em">—</span>;
+    else if (Array.isArray(v)) cell = (<div className="diff"><span className="old">{v[0]}</span><span className="new">↳ {v[1]}</span></div>);
+    else cell = <span className={"v" + (v === "—" || v === "N/A" ? " em" : "")}>{v}</span>;
+    return (<div className="row" key={k}><span className="k">{k}</span>{cell}</div>);
+  });
+}
+
+function exportTrace(id) {
+  const r = REQUESTS[id];
+  const payload = {
+    request_id: id, outcome: r.out, contract_action: r.action, winning_rule: r.win, matches_label: r.match,
+    tags: r.tags.map((t) => ({ name: t[0], value: t[1] })),
+    rules: r.rules.map((x) => ({ rule: x[0], result: x[1], verdict_on_fail: x[2], message: x[3] })),
+    rulebook: "v1.0", evaluated_at: new Date().toISOString(),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = id + "_trace.json";
+  a.click();
+}
+
+function ActionButton({ out }) {
+  if (out === "DENY") return (<button className="btn danger"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h0M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>Refer for review</button>);
+  if (out === "DEVELOP") return (<button className="btn primary"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H5.2L4 18z" /></svg>Issue development request</button>);
+  if (out === "INITIAL_ENROLLMENT_REQUIRED") return (<button className="btn primary"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>Route to enrollment</button>);
+  return (<button className="btn primary"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" /></svg>Confirm &amp; apply</button>);
+}
+
+function Donut() {
+  let off = 25;
+  return (
+    <svg viewBox="0 0 42 42" width="150" height="150">
+      <circle cx="21" cy="21" r="15.9" fill="none" stroke="#eef2f7" strokeWidth="5" />
+      {DIST.filter(([, n]) => n > 0).map(([nm, n, c]) => {
+        const len = (n / 60) * 100;
+        const el = <circle key={nm} cx="21" cy="21" r="15.9" fill="none" stroke={c} strokeWidth="5" strokeDasharray={`${len} ${100 - len}`} strokeDashoffset={off} />;
+        off -= len;
+        return el;
+      })}
+    </svg>
+  );
+}
+
+function ConfusionMatrix() {
+  const labels = ["APPROVE", "DEVELOP", "DENY", "INITIAL_ENROLLMENT_REQUIRED", "REJECT"];
+  const short = { APPROVE: "APR", DEVELOP: "DEV", DENY: "DENY", INITIAL_ENROLLMENT_REQUIRED: "INIT", REJECT: "REJ" };
+  const counts = { APPROVE: 49, DEVELOP: 6, DENY: 4, INITIAL_ENROLLMENT_REQUIRED: 1, REJECT: 0 };
+  return (
+    <div className="cm">
+      <div className="axis">Predicted →</div>
+      <table>
+        <tbody>
+          <tr><td className="corner">Labeled ↓</td>{labels.map((l) => <th key={l}>{short[l]}</th>)}</tr>
+          {labels.map((row) => (
+            <tr key={row}>
+              <th className="rowlab">{short[row]}</th>
+              {labels.map((col) => {
+                const val = row === col ? counts[row] : 0;
+                const onDiag = row === col;
+                const bg = val === 0 ? "#f4f7fa" : OUT[row].bg;
+                const fg = val === 0 ? "#c2cdda" : OUT[row].color;
+                return <td className="cell" key={col} style={{ background: bg, color: fg }}>{val}</td>;
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ------------------------------- component ------------------------------- */
+export default function ValidationEngine() {
+  const [tab, setTab] = useState("single");
+  const [sel, setSel] = useState(ORDER[0]);
+  const [filter, setFilter] = useState("all");
+  const r = REQUESTS[sel];
+  const o = OUT[r.out];
+  const firedIdx = TIERS.findIndex((t) => t.out === r.out);
+
+  const rows = RESULTS.filter((x) => (filter === "all" ? true : filter === "mismatch" ? !x[4] : x[2] === filter));
+
+  function openTrace(id) { if (REQUESTS[id]) { setSel(id); setTab("single"); window.scrollTo({ top: 0, behavior: "smooth" }); } }
+
+  return (
+    <div className="cve">
+      <style>{CSS}</style>
+      <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="top">
+            <div className="mark"><img src={dashMascot} alt="Dash" /></div>
+            <div className="wm"><img src={logoInk} alt="healthplans.ai" /></div>
+          </div>
+          <div className="tagline">Provider Contract Change Validation Engine · CMS-855I</div>
+        </div>
+        <div className="rule-divider" />
+        <div className="stat"><b>80</b> contracts</div>
+        <div className="stat"><b>60</b> change requests</div>
+        <div className="stat"><b>10</b> validation rules</div>
+        <div className="note">Deterministic, rule-driven decisions. Every outcome cites the rules and tags that produced it.</div>
+
+        <div className="nav-label">Workspace</div>
+        <nav className="nav">
+          <a className="active"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" /><rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="16" width="7" height="5" rx="1.5" /></svg>Validation Engine</a>
+          <a><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10" /></svg>Review Queue <span className="pill">10</span></a>
+          <a><svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>Validation Rules</a>
+          <a><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>Audit Log</a>
+        </nav>
+
+        <div className="assistant">
+          <img src={dashMascot} alt="Dash" />
+          <div className="t"><b>Dash</b> <span>· assistant</span><br /><span>10 requests routed for review.</span></div>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <div className="main">
+        <header className="topbar">
+          <div className="crumbs"><b>Validation Engine</b> <span className="sep">/</span> <span>{tab === "single" ? "Single decision" : "Batch report"}</span></div>
+          <div className="right">
+            <div className="chip"><span className="dot" /> Rulebook v1.0 · live</div>
+            <div className="avatar">RM</div>
+          </div>
+        </header>
+
+        <main className="content">
+          <div className="pagehead">
+            <h1>Contract Validation Engine</h1>
+            <div className="meta">Rule-driven · deterministic · <b>fully explainable</b></div>
+          </div>
+
+          <div className="tabs">
+            <div className={"tab" + (tab === "single" ? " active" : "")} onClick={() => setTab("single")}>Single decision</div>
+            <div className={"tab" + (tab === "batch" ? " active" : "")} onClick={() => setTab("batch")}>Batch report</div>
+          </div>
+
+          {/* ---------------- SINGLE ---------------- */}
+          {tab === "single" && (
+            <section className="view" key="single">
+              <div className="selector">
+                <div className="field">
+                  <label>Change request</label>
+                  <div className="select">
+                    <select value={sel} onChange={(e) => setSel(e.target.value)}>
+                      {ORDER.map((id) => <option key={id} value={id}>{REQUESTS[id].label}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* verdict bar */}
+              <div className="verdict-bar">
+                <div className="accent" style={{ background: o.color }} />
+                <div className="verdict-inner">
+                  <div className="ic" style={{ background: o.color }}><svg viewBox="0 0 24 24">{ICON[r.out]}</svg></div>
+                  <div className="tx"><h2 style={{ color: o.color }}>{o.label}</h2><div className="act">Contract action: {r.action}</div></div>
+                  <div className="right">
+                    <div className="vk"><div className="lab">Winning rule</div><div className="val">{r.win || "none"}</div></div>
+                    <div className="vk"><div className="lab">vs. labeled</div><div className="val match">match ✓</div></div>
+                    <div className="actions">
+                      <ActionButton out={r.out} />
+                      <button className="btn" onClick={() => exportTrace(sel)}><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></svg>Export</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ladder */}
+              <div className="card ladder-card">
+                <div className="hd">
+                  <div className="ic-sm"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" /></svg></div>
+                  <h3>Decision path</h3>
+                  <span className="meta">First matching tier wins · later tiers skipped</span>
+                </div>
+                <div className="ladder">
+                  {TIERS.map((t, i) => {
+                    const fired = i === firedIdx, skip = i > firedIdx;
+                    const c = OUT[t.out].color;
+                    return (
+                      <div key={t.tier} className={"step" + (fired ? " fired" : "") + (skip ? " skip" : "")} style={fired ? { borderColor: c } : undefined}>
+                        <div className="tier">{t.tier}</div>
+                        <div className="name" style={fired ? { color: c } : undefined}>{t.name}</div>
+                        <div className="rid">{t.rid}</div>
+                        <div className="badge2" style={fired ? { background: c } : undefined}>{fired ? "FIRED" : skip ? "skipped" : "pass"}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* request / contract */}
+              <div className="two">
+                <div className="card">
+                  <div className="hd"><div className="ic-sm"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></div><h3>Requested change</h3></div>
+                  <div className="dl"><DlRows obj={r.req} /></div>
+                </div>
+                <div className="card">
+                  <div className="hd"><div className="ic-sm"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7" /></svg></div><h3>Current contract <span style={{ fontWeight: 500, color: "var(--muted-2)" }}>(source of truth)</span></h3></div>
+                  <div className="dl"><DlRows obj={r.con} /></div>
+                </div>
+              </div>
+
+              {/* tags */}
+              <div className="card" style={{ marginBottom: 22 }}>
+                <div className="hd"><div className="ic-sm"><svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4zM3 12l9 4 9-4M3 17l9 4 9-4" /></svg></div><h3>Derived tags</h3><span className="meta">enriched facts the rules test</span></div>
+                <div className="tags">
+                  {r.tags.map(([k, v, kind]) => <span key={k} className={"tag " + (v ? (kind || "on") : "")}>{k} = {v ? "true" : "false"}</span>)}
+                </div>
+                <div className="tier-line">Screening tier: <b>{r.tier}</b></div>
+              </div>
+
+              {/* rules */}
+              <div className="card">
+                <div className="hd"><div className="ic-sm"><svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" /></svg></div><h3>Evaluated rules</h3><span className="meta"><span style={{ color: "var(--cyan-deep)", fontWeight: 800 }}>★</span> winning rule</span></div>
+                <table>
+                  <thead><tr><th>Rule</th><th>Result</th><th>Verdict on fail</th><th>Message</th></tr></thead>
+                  <tbody>
+                    {r.rules.map(([rid, res, vf, msg]) => {
+                      const win = r.win === rid;
+                      return (
+                        <tr key={rid} className={win ? "win" : ""}>
+                          <td><span className="rmono">{rid}</span>{win && <span className="winflag">★ deciding</span>}</td>
+                          <td><span className={"res " + res}><svg viewBox="0 0 20 20">{res === "pass" ? <path d="M4 11l4 4 8-9" /> : <path d="M5 5l10 10M15 5L5 15" />}</svg>{res.toUpperCase()}</span></td>
+                          <td>{vf === "—" ? <span style={{ color: "var(--muted-2)" }}>—</span> : <span className="vfail" style={{ color: OUT[vf].color, background: OUT[vf].bg }}>{OUT[vf].label}</span>}</td>
+                          <td className="msg">{msg}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div className="matchline">
+                  <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" /></svg>
+                  Labeled (ground-truth) outcome: <b>{o.label.toUpperCase()}</b>&nbsp;matches engine. &nbsp;·&nbsp; evaluated {new Date().toISOString().slice(0, 10)} against rulebook v1.0
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* ---------------- BATCH ---------------- */}
+          {tab === "batch" && (
+            <section className="view" key="batch">
+              <div className="kpis">
+                <div className="kpi"><div className="lab">Requests scored</div><div className="val">60</div><div className="sub">across 80 contracts</div><div className="bar"><i style={{ width: "100%", background: "linear-gradient(90deg,var(--cyan-deep),var(--cyan))" }} /></div></div>
+                <div className="kpi"><div className="lab">Outcome accuracy</div><div className="val">100%</div><div className="sub"><span className="tr">60 / 60</span> vs. labels</div><div className="bar"><i style={{ width: "100%", background: "linear-gradient(90deg,var(--approve),var(--cyan))" }} /></div></div>
+                <div className="kpi"><div className="lab">Straight-through</div><div className="val">49</div><div className="sub"><span className="tr">82%</span> auto-approved</div><div className="bar"><i style={{ width: "82%", background: "linear-gradient(90deg,var(--approve),#7fd3a9)" }} /></div></div>
+                <div className="kpi"><div className="lab">Routed to analyst</div><div className="val">11</div><div className="sub">6 develop · 4 deny · 1 enroll</div><div className="bar"><i style={{ width: "18%", background: "linear-gradient(90deg,var(--develop),var(--cyan))" }} /></div></div>
+              </div>
+
+              <div className="batch-grid">
+                <div className="card">
+                  <div className="hd"><div className="ic-sm"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M3 15h18M9 3v18M15 3v18" /></svg></div><h3>Confusion matrix</h3><span className="meta">predicted vs. labeled</span></div>
+                  <ConfusionMatrix />
+                </div>
+                <div className="card">
+                  <div className="hd"><div className="ic-sm"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 3v9l6 4" /></svg></div><h3>Outcome distribution</h3></div>
+                  <div className="dist">
+                    <div className="donut"><Donut /><div className="center"><div><b>60</b><span>requests</span></div></div></div>
+                    <div className="legend">
+                      {DIST.map(([nm, n, c]) => (
+                        <div className={"lr" + (n === 0 ? " zero" : "")} key={nm}><span className="d" style={{ background: c }} /><span className="n">{OUT[nm].label}</span>{n === 0 && <span className="tagm">rule-only</span>}<span className="c">{n}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="batch-grid">
+                <div className="card">
+                  <div className="hd"><div className="ic-sm"><svg viewBox="0 0 24 24"><path d="M3 3v18h18" /><path d="M7 14l3-4 3 3 5-7" /></svg></div><h3>Per-category accuracy</h3></div>
+                  <div className="cat-acc">
+                    {CATS.map(([nm, frac]) => (
+                      <div className="r" key={nm}><div className="nm">{nm}<small>{frac}</small></div><div className="track"><i style={{ width: "100%" }} /></div><div className="pct">100%</div></div>
+                    ))}
+                  </div>
+                </div>
+                <div className="card">
+                  <div className="hd"><div className="ic-sm"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 8h0M11 12h1v4h1" /></svg></div><h3>Data &amp; model notes</h3></div>
+                  <div style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div style={{ display: "flex", gap: 12 }}>
+                      <span className="badge" style={{ color: OUT.APPROVE.color, background: OUT.APPROVE.bg, flex: "0 0 auto", height: "fit-content" }}>82% APPROVE</span>
+                      <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.55 }}>Labels are heavily imbalanced. The decision path is rule-driven, so imbalance does not bias outcomes — but accuracy alone can mislead; read per-category recall.</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 12 }}>
+                      <span className="badge" style={{ color: OUT.REJECT.color, background: OUT.REJECT.bg, flex: "0 0 auto", height: "fit-content" }}>REJECT = 0</span>
+                      <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.55 }}>REJECT never appears in the labeled data. It cannot be learned — it is produced only by rules R-001 / R-008 and validated with <b style={{ color: "var(--ink)" }}>12 synthetic fixtures</b> (all passing).</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 12 }}>
+                      <span className="badge" style={{ color: OUT.DENY.color, background: OUT.DENY.bg, flex: "0 0 auto", height: "fit-content" }}>R-005</span>
+                      <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.55 }}>Every DENY traces to a Final Adverse Legal Action (tier-1 hard block). The lone INITIAL_ENROLLMENT_REQUIRED traces to R-003 (cross-state location add).</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="hd"><div className="ic-sm"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg></div><h3>Request results</h3><span className="meta"><b style={{ color: "var(--approve)" }}>0 mismatches</b> · click any row to inspect its trace</span></div>
+                <div className="filter-row">
+                  {FILTERS.map(([k, l]) => <button key={k} className={"fbtn" + (filter === k ? " active" : "")} onClick={() => setFilter(k)}>{l}</button>)}
+                </div>
+                <table>
+                  <thead><tr><th>Request</th><th>Category</th><th>Predicted</th><th>Labeled</th><th>Match</th></tr></thead>
+                  <tbody>
+                    {rows.length === 0 ? (
+                      <tr><td colSpan={5}><div className="clean"><div className="big"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" /></svg></div><h4>No mismatches</h4><div>The engine reproduces all labeled outcomes for this filter.</div></div></td></tr>
+                    ) : rows.map(([id, cat, pred, lab, m]) => {
+                      const clickable = !!REQUESTS[id];
+                      return (
+                        <tr key={id} className={clickable ? "clickable" : ""} onClick={clickable ? () => openTrace(id) : undefined}>
+                          <td><span className="rmono">{id}</span></td>
+                          <td style={{ fontWeight: 600 }}>{cat}</td>
+                          <td><span className="badge" style={{ color: OUT[pred].color, background: OUT[pred].bg }}>{OUT[pred].label}</span></td>
+                          <td><span className="badge" style={{ color: OUT[lab].color, background: OUT[lab].bg }}>{OUT[lab].label}</span></td>
+                          <td><span className={"res " + (m ? "pass" : "fail")}><svg viewBox="0 0 20 20">{m ? <path d="M4 11l4 4 8-9" /> : <path d="M5 5l10 10M15 5L5 15" />}</svg>{m ? "MATCH" : "MISS"}</span></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          <div className="footer">
+            <img src={dashMascot} alt="" />
+            healthplans.ai · Provider Contract Change Validation Engine — evaluated against rulebook v1.0 · confidential, internal use only.
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,107 @@
+# Editable rulebook (R-001..R-010).
+#
+# `rules` holds per-rule metadata: which change categories the rule fires for,
+# the outcome it produces on failure, and a short human label. `parameters` holds
+# the controlled lists the rule predicates consult. The decision *logic* lives in
+# engine/rules.py; this file lets analysts retune scope, verdicts, and vocabularies
+# without code changes (BR-11).
+
+rules:
+  R-001:
+    label: "Correct CMS form"
+    applies_to_change_category: "All"
+    failure_outcome: "REJECT"
+    description: >-
+      Change requests for existing CMS-855I practitioners must be submitted on
+      CMS-855I, not CMS-855O or another form.
+  R-002:
+    label: "Provider identifiers match source of truth"
+    applies_to_change_category: "All"
+    failure_outcome: "DEVELOP"
+    description: >-
+      Provider identifiers must match the source-of-truth enrollment record:
+      NPI, PTAN, legal name/LBN, and TIN/SSN key.
+  R-003:
+    label: "Out-of-state practice location add"
+    applies_to_change_category: "Practice Location Address"
+    failure_outcome: "INITIAL_ENROLLMENT_REQUIRED"
+    description: >-
+      A CMS-855I out-of-state practice location addition requires a separate
+      initial enrollment application.
+  R-004:
+    label: "Allowed special payment address"
+    applies_to_change_category: "Special Payment Address"
+    failure_outcome: "DEVELOP"
+    description: >-
+      Special payment address must be an allowed destination such as practice
+      location, PO Box, lockbox, billing agent, or correspondence address.
+  R-005:
+    label: "Final adverse legal action screening"
+    applies_to_change_category: "Final Adverse Legal Action"
+    failure_outcome: "DENY"
+    description: >-
+      All final adverse legal actions must be reported and screened;
+      exclusion/debarment/revocation blocks approval (DENY). Other disclosures
+      are developed pending documentation.
+  R-006:
+    label: "Reassignee enrollment verified"
+    applies_to_change_category: "Reassignment"
+    failure_outcome: "DEVELOP"
+    description: >-
+      Reassigned group or organization must be enrolled before approving the
+      reassignment.
+  R-007:
+    label: "EFT documentation present"
+    applies_to_change_category: "EFT Information"
+    failure_outcome: "DEVELOP"
+    description: >-
+      EFT changes require CMS-588 and bank documentation; the contractor must
+      verify the change with the appropriate party.
+  R-008:
+    label: "Signed certification statement"
+    applies_to_change_category: "All"
+    failure_outcome: "REJECT"
+    description: >-
+      Certification statement must be signed and dated by the individual
+      practitioner for CMS-855I.
+  R-009:
+    label: "Specialty compatible with licensure"
+    applies_to_change_category: "Primary Specialty"
+    failure_outcome: "DENY"
+    description: >-
+      Specialty changes must be compatible with licensure/certification and the
+      provider type. Incompatible provider-type reclassifications are denied.
+  R-010:
+    label: "Reuse existing documentation"
+    applies_to_change_category: "All"
+    failure_outcome: "DEVELOP"
+    description: >-
+      Existing documentation in the provider file may be reused unless new
+      evidence is required; otherwise develop for the missing documentation.
+
+parameters:
+  # Accepted form for CMS-855I change-of-information requests.
+  accepted_cms_form: "CMS-855I"
+
+  # Allowed special payment address destinations (R-004). Matched as
+  # case-insensitive substrings against requested_new_value.
+  special_payment_allowed_types:
+    - "practice location"
+    - "po box"
+    - "p.o. box"
+    - "lockbox"
+    - "billing agent"
+    - "billing agency"
+    - "correspondence"
+
+  # Keywords in a Final Adverse Legal Action that constitute a hard block (R-005 -> DENY).
+  exclusion_keywords:
+    - "exclusion"
+    - "debarment"
+    - "revocation"
+    - "excluded"
+
+  # Requested specialty values that represent an incompatible provider-type
+  # reclassification for an enrolled physician (R-009 -> DENY).
+  incompatible_specialty_targets:
+    - "Physician Assistant"
